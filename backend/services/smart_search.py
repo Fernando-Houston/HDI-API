@@ -7,7 +7,7 @@ import re
 import structlog
 
 from backend.services.perplexity_client import PerplexityClient
-from backend.services.hcad_client import HCADClient
+from backend.services.postgres_hcad_client import PostgresHCADClient as HCADClient
 from backend.services.data_fusion import DataFusionEngine
 from backend.utils.exceptions import ValidationError
 
