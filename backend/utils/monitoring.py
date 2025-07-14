@@ -2,7 +2,7 @@
 
 import time
 import functools
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional, List
 import structlog
 from datetime import datetime
 import threading

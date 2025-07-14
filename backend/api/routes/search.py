@@ -6,9 +6,13 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict
 import time
+import os
+import structlog
 
 from backend.config.settings import settings
 from backend.utils.exceptions import ValidationError
+
+logger = structlog.get_logger(__name__)
 
 search_ns = Namespace("search", description="Search and autocomplete operations")
 
@@ -227,7 +231,3 @@ class OwnerAutocomplete(Resource):
             raise ValidationError(f"Search error: {str(e)}")
 
 
-# Add to routes registration
-import os
-import structlog
-logger = structlog.get_logger(__name__)
