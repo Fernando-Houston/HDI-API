@@ -269,6 +269,43 @@ class PropertyLocationSearch(Resource):
         }
 
 
+@properties_ns.route('/location')
+class PropertyLocationGet(Resource):
+    """Get properties near location via GET request"""
+    
+    @properties_ns.doc("get_properties_near_location",
+        params={
+            'lat': 'Latitude coordinate',
+            'lon': 'Longitude coordinate', 
+            'radius_miles': 'Search radius in miles (default: 1)',
+            'limit': 'Maximum results (default: 20)'
+        })
+    def get(self):
+        """Find properties within radius of coordinates"""
+        lat = request.args.get('lat', type=float)
+        lon = request.args.get('lon', type=float)
+        radius = request.args.get('radius_miles', 1.0, type=float)
+        limit = request.args.get('limit', 20, type=int)
+        
+        if not lat or not lon:
+            raise ValidationError("lat and lon query parameters are required")
+        
+        hcad_client = PostgresHCADClient()
+        properties = hcad_client.get_properties_near_location(
+            lat, lon, radius, limit
+        )
+        
+        return {
+            "search_location": {
+                "latitude": lat,
+                "longitude": lon,
+                "radius_miles": radius
+            },
+            "count": len(properties),
+            "properties": properties
+        }
+
+
 @properties_ns.route('/<string:account_number>/similar')
 class SimilarProperties(Resource):
     """Find similar properties to a given property"""
