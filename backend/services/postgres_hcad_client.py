@@ -727,73 +727,74 @@ class PostgresHCADClient:
         query = query.strip().upper()
         
         try:
-            with db_pool.get_cursor() as cur:
-                results = []
-                
-                # Stage 1: Exact match
-                cur.execute("""
-                    SELECT * FROM properties 
-                    WHERE property_address = %s
-                    LIMIT %s
-                """, (query, limit))
-                exact_matches = cur.fetchall()
-                
-                if exact_matches:
-                    results.extend([self._format_property_for_frontend(dict(row)) for row in exact_matches])
-                
-                # Stage 2: LIKE match if we need more results
-                if len(results) < limit:
-                    remaining = limit - len(results)
+            with psycopg2.connect(self.db_url) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    results = []
+                    
+                    # Stage 1: Exact match
                     cur.execute("""
                         SELECT * FROM properties 
-                        WHERE property_address LIKE %s
-                        AND property_address != %s
-                        ORDER BY LENGTH(property_address), property_address
+                        WHERE property_address = %s
                         LIMIT %s
-                    """, (f'%{query}%', query, remaining))
-                    like_matches = cur.fetchall()
-                    results.extend([self._format_property_for_frontend(dict(row)) for row in like_matches])
-                
-                # Stage 3: Component matching if still need more
-                if len(results) < limit and len(query.split()) > 1:
-                    remaining = limit - len(results)
-                    components = query.split()
+                    """, (query, limit))
+                    exact_matches = cur.fetchall()
                     
-                    # Try matching on individual components
-                    component_conditions = []
-                    params = []
-                    for comp in components:
-                        if len(comp) >= 3:  # Only meaningful components
-                            component_conditions.append("property_address LIKE %s")
-                            params.append(f'%{comp}%')
+                    if exact_matches:
+                        results.extend([self._format_property_for_frontend(dict(row)) for row in exact_matches])
                     
-                    if component_conditions:
-                        existing_addresses = [r['address'] for r in results]
+                    # Stage 2: LIKE match if we need more results
+                    if len(results) < limit:
+                        remaining = limit - len(results)
+                        cur.execute("""
+                            SELECT * FROM properties 
+                            WHERE property_address LIKE %s
+                            AND property_address != %s
+                            ORDER BY LENGTH(property_address), property_address
+                            LIMIT %s
+                        """, (f'%{query}%', query, remaining))
+                        like_matches = cur.fetchall()
+                        results.extend([self._format_property_for_frontend(dict(row)) for row in like_matches])
+                    
+                    # Stage 3: Component matching if still need more
+                    if len(results) < limit and len(query.split()) > 1:
+                        remaining = limit - len(results)
+                        components = query.split()
                         
-                        if existing_addresses:
-                            placeholders = ','.join(['%s'] * len(existing_addresses))
-                            component_query = f"""
-                                SELECT * FROM properties 
-                                WHERE ({' AND '.join(component_conditions)})
-                                AND property_address NOT IN ({placeholders})
-                                ORDER BY LENGTH(property_address), property_address
-                                LIMIT %s
-                            """
-                            params.extend(existing_addresses)
-                        else:
-                            component_query = f"""
-                                SELECT * FROM properties 
-                                WHERE ({' AND '.join(component_conditions)})
-                                ORDER BY LENGTH(property_address), property_address
-                                LIMIT %s
-                            """
+                        # Try matching on individual components
+                        component_conditions = []
+                        params = []
+                        for comp in components:
+                            if len(comp) >= 3:  # Only meaningful components
+                                component_conditions.append("property_address LIKE %s")
+                                params.append(f'%{comp}%')
                         
-                        params.append(remaining)
-                        cur.execute(component_query, params)
-                        component_matches = cur.fetchall()
-                        results.extend([self._format_property_for_frontend(dict(row)) for row in component_matches])
-                
-                return results[:limit]
+                        if component_conditions:
+                            existing_addresses = [r['address'] for r in results]
+                            
+                            if existing_addresses:
+                                placeholders = ','.join(['%s'] * len(existing_addresses))
+                                component_query = f"""
+                                    SELECT * FROM properties 
+                                    WHERE ({' AND '.join(component_conditions)})
+                                    AND property_address NOT IN ({placeholders})
+                                    ORDER BY LENGTH(property_address), property_address
+                                    LIMIT %s
+                                """
+                                params.extend(existing_addresses)
+                            else:
+                                component_query = f"""
+                                    SELECT * FROM properties 
+                                    WHERE ({' AND '.join(component_conditions)})
+                                    ORDER BY LENGTH(property_address), property_address
+                                    LIMIT %s
+                                """
+                            
+                            params.append(remaining)
+                            cur.execute(component_query, params)
+                            component_matches = cur.fetchall()
+                            results.extend([self._format_property_for_frontend(dict(row)) for row in component_matches])
+                    
+                    return results[:limit]
                 
         except Exception as e:
             logger.error(f"Error in enhanced search: {str(e)}")
