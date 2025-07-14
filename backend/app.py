@@ -51,8 +51,19 @@ def create_app(config_name: str = "development") -> Flask:
     app.config["SECRET_KEY"] = settings.SECRET_KEY
     app.config["DEBUG"] = settings.DEBUG
     
-    # Configure CORS
-    CORS(app, origins=settings.ALLOWED_ORIGINS)
+    # Configure CORS with specific origins for your frontend
+    CORS(app, 
+         origins=[
+             "https://hdi-grid-ui.vercel.app",  # Your Vercel frontend
+             "http://localhost:5173",            # Vite development
+             "http://localhost:3000",            # React development
+             "http://localhost:4000",            # Alternative port
+             "http://localhost:8501",            # Streamlit
+         ],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         supports_credentials=True
+    )
     
     # Configure Response Compression (70% size reduction)
     Compress(app)
