@@ -4,6 +4,7 @@ from flask import request
 from flask_restx import Namespace, Resource, fields
 import os
 import structlog
+from datetime import datetime
 
 from backend.services.data_fusion import DataFusionEngine
 from backend.services.postgres_hcad_client import PostgresHCADClient
@@ -17,6 +18,7 @@ properties_ns = Namespace("properties", description="Property data operations")
 # Request/Response models
 property_search_model = properties_ns.model("PropertySearch", {
     "address": fields.String(required=True, description="Property address"),
+    "limit": fields.Integer(default=20, description="Maximum number of results to return"),
     "include_market_data": fields.Boolean(default=True, description="Include market analysis"),
     "include_comparables": fields.Boolean(default=False, description="Include comparable properties")
 })
@@ -34,27 +36,94 @@ property_response_model = properties_ns.model("PropertyResponse", {
 
 @properties_ns.route("/search")
 class PropertySearch(Resource):
-    """Property search endpoint"""
+    """Enhanced property search endpoint that returns arrays"""
     
     @properties_ns.doc("search_properties")
     @properties_ns.expect(property_search_model)
-    @properties_ns.marshal_with(property_response_model)
     def post(self):
-        """Search for property information combining HCAD and market data"""
+        """Search for properties by address with fuzzy matching and standardized response"""
         data = request.get_json()
         
         if not data or "address" not in data:
             raise ValidationError("Address is required")
         
         address = data["address"]
+        limit = data.get("limit", 20)  # Default to 20 results
         
-        # Initialize data fusion engine
-        fusion = DataFusionEngine()
+        try:
+            # Use enhanced PostgreSQL search
+            hcad_client = PostgresHCADClient()
+            properties = hcad_client.search_properties_by_address(address, limit=limit)
+            
+            # Build standardized response
+            response = {
+                "success": True,
+                "query": address,
+                "count": len(properties),
+                "properties": properties,
+                "timestamp": datetime.now().isoformat(),
+                "searchType": "address_fuzzy_match"
+            }
+            
+            logger.info(f"Search returned {len(properties)} properties for address: {address}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Search failed for address {address}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "query": address,
+                "count": 0,
+                "properties": [],
+                "timestamp": datetime.now().isoformat()
+            }, 500
+
+@properties_ns.route("/search/address")
+class AddressSearch(Resource):
+    """GET endpoint for simple address search"""
+    
+    @properties_ns.doc("search_by_address",
+        params={
+            'q': 'Search query (address)',
+            'limit': 'Maximum results (default: 20)',
+        })
+    def get(self):
+        """Search properties by address using GET request"""
+        query = request.args.get('q', '').strip()
+        limit = min(request.args.get('limit', 20, type=int), 100)  # Max 100 results
         
-        # Get comprehensive property intelligence
-        intelligence = fusion.get_property_intelligence(address)
+        if not query:
+            raise ValidationError("Query parameter 'q' is required")
         
-        return intelligence
+        try:
+            # Use enhanced PostgreSQL search
+            hcad_client = PostgresHCADClient()
+            properties = hcad_client.search_properties_by_address(query, limit=limit)
+            
+            # Build standardized response
+            response = {
+                "success": True,
+                "query": query,
+                "count": len(properties),
+                "properties": properties,
+                "timestamp": datetime.now().isoformat(),
+                "searchType": "address_fuzzy_match"
+            }
+            
+            logger.info(f"GET search returned {len(properties)} properties for query: {query}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"GET search failed for query {query}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "query": query,
+                "count": 0,
+                "properties": [],
+                "timestamp": datetime.now().isoformat()
+            }, 500
 
 @properties_ns.route("/analyze")
 class PropertyAnalysis(Resource):
@@ -228,7 +297,7 @@ class NeighborhoodStats(Resource):
             "statistics": stats,
             "market_insights": market_insights,
             "data_source": "PostgreSQL Database",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
 

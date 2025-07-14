@@ -462,6 +462,410 @@ class PostgresHCADClient:
             logger.error(f"Location search error: {str(e)}")
             return []
 
+    def search_properties_by_address(self, address: str, limit: int = 20) -> List[Dict]:
+        """
+        Enhanced address search that returns multiple properties with fuzzy matching
+        Returns standardized camelCase format with all required frontend fields
+        """
+        try:
+            # Use direct connection instead of pool to debug
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            
+            with psycopg2.connect(self.db_url) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Clean the address for better matching
+                    address_clean = address.strip().upper()
+                    
+                    # Simplified query first - just search in property_address
+                    query = """
+                    SELECT * FROM properties
+                    WHERE UPPER(property_address) LIKE %s
+                    ORDER BY total_value DESC NULLS LAST
+                    LIMIT %s
+                    """
+                    
+                    search_pattern = f'%{address_clean}%'
+                    cur.execute(query, (search_pattern, limit))
+                    exact_matches = cur.fetchall()
+                    
+                    results = []
+                    
+                    # Process results
+                    for row in exact_matches:
+                        try:
+                            formatted_prop = self._format_property_for_frontend(dict(row))
+                            results.append(formatted_prop)
+                        except Exception as format_error:
+                            logger.warning(f"Failed to format property {row.get('account_number', 'unknown')}: {format_error}")
+                            continue
+                    
+                    # If no results and address has components, try fuzzy matching
+                    if len(results) == 0:
+                        address_parts = self._parse_address_components(address)
+                        if address_parts and address_parts.get('number') and address_parts.get('street'):
+                            # Try searching by components
+                            fuzzy_query = """
+                            SELECT * FROM properties
+                            WHERE property_address LIKE %s
+                            AND property_address LIKE %s
+                            ORDER BY total_value DESC NULLS LAST
+                            LIMIT %s
+                            """
+                            
+                            street_number_pattern = f'{address_parts["number"]}%'
+                            street_name_pattern = f'%{address_parts["street"].upper()}%'
+                            
+                            cur.execute(fuzzy_query, (street_number_pattern, street_name_pattern, limit))
+                            fuzzy_matches = cur.fetchall()
+                            
+                            for row in fuzzy_matches:
+                                try:
+                                    formatted_prop = self._format_property_for_frontend(dict(row))
+                                    results.append(formatted_prop)
+                                except Exception as format_error:
+                                    logger.warning(f"Failed to format property {row.get('account_number', 'unknown')}: {format_error}")
+                                    continue
+                    
+                    logger.info(f"Address search found {len(results)} properties for: {address}")
+                    return results
+                
+        except Exception as e:
+            logger.error(f"Enhanced address search error: {type(e).__name__}: {str(e)}")
+            return []
+    
+    def _parse_address_components(self, address: str) -> Optional[Dict]:
+        """Enhanced address parsing with better component extraction"""
+        import re
+        
+        # Remove common suffixes and normalize
+        address_clean = re.sub(r'\s+(HOUSTON|TX|TEXAS|\d{5})\s*$', '', address.strip(), flags=re.IGNORECASE)
+        
+        # Extract street number and name
+        patterns = [
+            r'^(\d+)\s+(.+?)(?:\s+(?:APT|UNIT|STE|#).*)?$',  # With apt/unit
+            r'^(\d+)\s+(.+)$'  # Basic pattern
+        ]
+        
+        for pattern in patterns:
+            match = re.match(pattern, address_clean.strip(), re.IGNORECASE)
+            if match:
+                return {
+                    'number': match.group(1),
+                    'street': match.group(2).strip()
+                }
+        
+        return None
+    
+    def _format_property_for_frontend(self, data: Dict) -> Dict:
+        """Format property data for frontend with all required fields in camelCase"""
+        # Get base formatted data
+        base_data = self._format_hcad_response(data)
+        
+        # Extract key values
+        market_value = base_data.get('market_value', 0)
+        building_sqft = base_data.get('building_sqft', 0)
+        year_built = base_data.get('year_built', 0)
+        
+        # Calculate derived values
+        price_per_sqft = (market_value / building_sqft) if building_sqft > 0 else 0
+        
+        # Generate default AI-derived fields (these would normally come from AI services)
+        estimated_rental = self._estimate_rental_value(market_value, building_sqft, base_data.get('city', ''))
+        investment_score = self._calculate_investment_score(market_value, year_built, base_data.get('property_type', ''))
+        neighborhood_trend = self._get_default_neighborhood_trend(base_data.get('city', ''))
+        estimated_value_range = self._calculate_value_range(market_value)
+        
+        # Return frontend-compatible format with all required fields
+        return {
+            # Core property information (camelCase)
+            "accountNumber": base_data.get('account_number', ''),
+            "address": base_data.get('property_address', ''),
+            "city": base_data.get('city', ''),
+            "state": base_data.get('state', 'TX'),
+            "zipCode": base_data.get('zip', ''),
+            "ownerName": base_data.get('owner_name', ''),
+            
+            # Property details
+            "propertyType": base_data.get('property_type', ''),
+            "propertyClass": base_data.get('property_class', ''),
+            "yearBuilt": year_built,
+            "buildingSqft": building_sqft,
+            "landSqft": base_data.get('land_sqft', 0),
+            "landAcres": base_data.get('land_acres', 0),
+            
+            # Financial information
+            "marketValue": market_value,
+            "appraisedValue": base_data.get('appraised_value', 0),
+            "landValue": base_data.get('land_value', 0),
+            "improvementValue": base_data.get('improvement_value', 0),
+            "pricePerSqft": round(price_per_sqft, 2),
+            
+            # Location data
+            "latitude": base_data.get('latitude'),
+            "longitude": base_data.get('longitude'),
+            "hasGeometry": base_data.get('has_geometry', False),
+            
+            # Required AI-derived fields with defaults
+            "neighborhoodTrend": neighborhood_trend,
+            "estimatedValueRange": estimated_value_range,
+            "rentalEstimate": estimated_rental,
+            "investmentScore": investment_score,
+            
+            # Additional analysis fields
+            "lastUpdated": base_data.get('last_updated', datetime.now().isoformat()),
+            "dataSource": "PostgreSQL Database",
+            "confidence": 0.8  # Default confidence score
+        }
+    
+    def _estimate_rental_value(self, market_value: float, sqft: float, city: str) -> Dict:
+        """Generate default rental estimate based on market value"""
+        if market_value <= 0:
+            return {"monthly": 0, "annual": 0, "confidence": "low"}
+        
+        # Use industry rule of thumb: monthly rent = 0.5-1% of market value
+        base_monthly = market_value * 0.007  # 0.7% as middle ground
+        
+        # Adjust based on city and property size
+        city_multiplier = 1.1 if city.upper() in ['HOUSTON', 'KATY', 'SUGAR LAND'] else 1.0
+        size_multiplier = 1.05 if sqft > 2000 else 0.95 if sqft < 1000 else 1.0
+        
+        monthly_estimate = base_monthly * city_multiplier * size_multiplier
+        
+        return {
+            "monthly": round(monthly_estimate),
+            "annual": round(monthly_estimate * 12),
+            "confidence": "medium"
+        }
+    
+    def _calculate_investment_score(self, market_value: float, year_built: int, property_type: str) -> Dict:
+        """Calculate default investment score"""
+        score = 50  # Base score
+        
+        # Age factor
+        current_year = datetime.now().year
+        if year_built and year_built > 0:
+            age = current_year - year_built
+            if age < 10:
+                score += 20
+            elif age < 30:
+                score += 10
+            elif age > 50:
+                score -= 10
+        
+        # Value factor
+        if market_value > 500000:
+            score += 15
+        elif market_value < 150000:
+            score -= 10
+        
+        # Property type factor
+        if 'SINGLE FAMILY' in property_type.upper():
+            score += 10
+        elif 'CONDO' in property_type.upper():
+            score += 5
+        
+        # Clamp score between 0-100
+        final_score = max(0, min(100, score))
+        
+        # Determine rating
+        if final_score >= 80:
+            rating = "excellent"
+        elif final_score >= 70:
+            rating = "good"
+        elif final_score >= 50:
+            rating = "fair"
+        else:
+            rating = "poor"
+        
+        return {
+            "score": final_score,
+            "rating": rating,
+            "factors": ["age", "value", "type"]
+        }
+    
+    def _get_default_neighborhood_trend(self, city: str) -> Dict:
+        """Generate default neighborhood trend data"""
+        # Default trends for major Houston areas
+        default_trends = {
+            "HOUSTON": {"direction": "up", "percentage": 3.5, "period": "12_months"},
+            "KATY": {"direction": "up", "percentage": 4.2, "period": "12_months"},
+            "SUGAR LAND": {"direction": "up", "percentage": 3.8, "period": "12_months"},
+            "CYPRESS": {"direction": "up", "percentage": 3.2, "period": "12_months"}
+        }
+        
+        city_upper = city.upper()
+        if city_upper in default_trends:
+            return default_trends[city_upper]
+        else:
+            return {"direction": "stable", "percentage": 2.0, "period": "12_months"}
+    
+    def _calculate_value_range(self, market_value: float) -> Dict:
+        """Calculate estimated value range around market value"""
+        if market_value <= 0:
+            return {"min": 0, "max": 0, "confidence": "low"}
+        
+        # Use +/- 10% as standard range
+        range_percentage = 0.10
+        min_value = market_value * (1 - range_percentage)
+        max_value = market_value * (1 + range_percentage)
+        
+        return {
+            "min": round(min_value),
+            "max": round(max_value),
+            "confidence": "medium"
+        }
+
+    def search_properties_by_address(self, query: str, limit: int = 10) -> List[Dict]:
+        """
+        Enhanced search for multiple properties with fuzzy matching
+        Returns array of properties with standardized format
+        """
+        if not query.strip():
+            return []
+            
+        query = query.strip().upper()
+        
+        try:
+            with db_pool.get_cursor() as cur:
+                results = []
+                
+                # Stage 1: Exact match
+                cur.execute("""
+                    SELECT * FROM properties 
+                    WHERE property_address = %s
+                    LIMIT %s
+                """, (query, limit))
+                exact_matches = cur.fetchall()
+                
+                if exact_matches:
+                    results.extend([self._format_property_for_frontend(dict(row)) for row in exact_matches])
+                
+                # Stage 2: LIKE match if we need more results
+                if len(results) < limit:
+                    remaining = limit - len(results)
+                    cur.execute("""
+                        SELECT * FROM properties 
+                        WHERE property_address LIKE %s
+                        AND property_address != %s
+                        ORDER BY LENGTH(property_address), property_address
+                        LIMIT %s
+                    """, (f'%{query}%', query, remaining))
+                    like_matches = cur.fetchall()
+                    results.extend([self._format_property_for_frontend(dict(row)) for row in like_matches])
+                
+                # Stage 3: Component matching if still need more
+                if len(results) < limit and len(query.split()) > 1:
+                    remaining = limit - len(results)
+                    components = query.split()
+                    
+                    # Try matching on individual components
+                    component_conditions = []
+                    params = []
+                    for comp in components:
+                        if len(comp) >= 3:  # Only meaningful components
+                            component_conditions.append("property_address LIKE %s")
+                            params.append(f'%{comp}%')
+                    
+                    if component_conditions:
+                        existing_addresses = [r['address'] for r in results]
+                        
+                        if existing_addresses:
+                            placeholders = ','.join(['%s'] * len(existing_addresses))
+                            component_query = f"""
+                                SELECT * FROM properties 
+                                WHERE ({' AND '.join(component_conditions)})
+                                AND property_address NOT IN ({placeholders})
+                                ORDER BY LENGTH(property_address), property_address
+                                LIMIT %s
+                            """
+                            params.extend(existing_addresses)
+                        else:
+                            component_query = f"""
+                                SELECT * FROM properties 
+                                WHERE ({' AND '.join(component_conditions)})
+                                ORDER BY LENGTH(property_address), property_address
+                                LIMIT %s
+                            """
+                        
+                        params.append(remaining)
+                        cur.execute(component_query, params)
+                        component_matches = cur.fetchall()
+                        results.extend([self._format_property_for_frontend(dict(row)) for row in component_matches])
+                
+                return results[:limit]
+                
+        except Exception as e:
+            logger.error(f"Error in enhanced search: {str(e)}")
+            return []
+
+    def _format_property_for_frontend(self, property_data: Dict) -> Dict:
+        """
+        Format property data with all required frontend fields in camelCase
+        """
+        # Get base HCAD response format
+        base_response = self._format_hcad_response(property_data)
+        
+        # Convert to camelCase and add missing fields
+        formatted = {
+            # Core property information (camelCase)
+            "accountNumber": base_response.get("account_number", ""),
+            "address": base_response.get("property_address", ""),
+            "ownerName": base_response.get("owner_name", ""),
+            "city": base_response.get("city", ""),
+            "zipCode": base_response.get("zip_code", ""),
+            "propertyType": base_response.get("property_type", "residential"),
+            
+            # Financial information
+            "marketValue": base_response.get("market_value", 0),
+            "landValue": base_response.get("land_value", 0),
+            "improvementValue": base_response.get("improvement_value", 0),
+            "totalValue": base_response.get("total_value", 0),
+            
+            # Physical characteristics
+            "squareFeet": base_response.get("building_sqft", 0),
+            "areaSqft": base_response.get("area_sqft", 0),
+            "yearBuilt": base_response.get("year_built"),
+            "lotSize": base_response.get("lot_size", 0),
+            
+            # Location data
+            "latitude": base_response.get("latitude"),
+            "longitude": base_response.get("longitude"),
+            
+            # Geometry information (if available)
+            "geometry": base_response.get("geometry", {}),
+            
+            # Required frontend fields with defaults
+            "estimatedValueRange": self._calculate_value_range(base_response.get("market_value", 0)),
+            "rentalEstimate": self._calculate_rental_estimate(base_response.get("market_value", 0)),
+            "investmentScore": self._calculate_investment_score(property_data),
+            "neighborhoodTrend": self._get_default_neighborhood_trend(base_response.get("city", "Houston")),
+            
+            # Additional metadata
+            "lastUpdated": base_response.get("last_updated"),
+            "dataSource": "hcad_postgresql",
+            "searchRelevance": 1.0  # Can be updated based on search matching
+        }
+        
+        return formatted
+
+    def _calculate_rental_estimate(self, market_value: float) -> Dict:
+        """Calculate rental estimate using industry standard ratios"""
+        if market_value <= 0:
+            return {"monthly": 0, "annual": 0, "confidence": "low"}
+        
+        # Industry rule of thumb: 0.7% - 1% of property value per month
+        monthly_rate = 0.007  # 0.7%
+        monthly_rent = market_value * monthly_rate
+        annual_rent = monthly_rent * 12
+        
+        return {
+            "monthly": round(monthly_rent),
+            "annual": round(annual_rent),
+            "confidence": "medium",
+            "source": "calculated"
+        }
+
     def close(self):
         """Compatibility method - PostgreSQL uses connection pooling"""
         pass
