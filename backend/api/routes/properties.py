@@ -2,11 +2,15 @@
 
 from flask import request
 from flask_restx import Namespace, Resource, fields
+import os
+import structlog
 
 from backend.services.data_fusion import DataFusionEngine
 from backend.services.postgres_hcad_client import PostgresHCADClient
 from backend.services.perplexity_client import PerplexityClient
 from backend.utils.exceptions import ValidationError
+
+logger = structlog.get_logger(__name__)
 
 properties_ns = Namespace("properties", description="Property data operations")
 
@@ -285,7 +289,7 @@ class PropertyLocationGet(Resource):
         lat = request.args.get('lat', type=float)
         lon = request.args.get('lon', type=float)
         radius = request.args.get('radius_miles', 1.0, type=float)
-        limit = request.args.get('limit', 20, type=int)
+        limit = min(request.args.get('limit', 100, type=int), 500)  # Default 100, max 500
         
         if not lat or not lon:
             raise ValidationError("lat and lon query parameters are required")
@@ -304,6 +308,81 @@ class PropertyLocationGet(Resource):
             "count": len(properties),
             "properties": properties
         }
+
+
+@properties_ns.route('/all')
+class AllProperties(Resource):
+    """Browse all properties with pagination"""
+    
+    @properties_ns.doc("get_all_properties",
+        params={
+            'page': 'Page number (default: 1)',
+            'per_page': 'Results per page (default: 100, max: 1000)',
+            'city': 'Filter by city (optional)',
+            'min_value': 'Minimum property value (optional)',
+            'max_value': 'Maximum property value (optional)'
+        })
+    def get(self):
+        """Get paginated list of all properties"""
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 100, type=int), 1000)
+        city = request.args.get('city', type=str)
+        min_value = request.args.get('min_value', type=float)
+        max_value = request.args.get('max_value', type=float)
+        
+        offset = (page - 1) * per_page
+        
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        
+        db_url = os.getenv('DATABASE_URL')
+        
+        try:
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Build query with filters
+                    query = "SELECT * FROM properties WHERE 1=1"
+                    params = []
+                    
+                    if city:
+                        query += " AND city = %s"
+                        params.append(city.upper())
+                    
+                    if min_value is not None:
+                        query += " AND total_value >= %s"
+                        params.append(min_value)
+                        
+                    if max_value is not None:
+                        query += " AND total_value <= %s"
+                        params.append(max_value)
+                    
+                    # Get total count
+                    count_query = f"SELECT COUNT(*) as total FROM ({query}) as filtered"
+                    cur.execute(count_query, params)
+                    total_count = cur.fetchone()['total']
+                    
+                    # Get paginated results
+                    query += " ORDER BY account_number LIMIT %s OFFSET %s"
+                    params.extend([per_page, offset])
+                    
+                    cur.execute(query, params)
+                    properties = [dict(row) for row in cur.fetchall()]
+                    
+                    # Format response
+                    return {
+                        "page": page,
+                        "per_page": per_page,
+                        "total": total_count,
+                        "total_pages": (total_count + per_page - 1) // per_page,
+                        "count": len(properties),
+                        "properties": properties,
+                        "has_next": page * per_page < total_count,
+                        "has_prev": page > 1
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error fetching properties: {str(e)}")
+            raise ValidationError(f"Database error: {str(e)}")
 
 
 @properties_ns.route('/<string:account_number>/similar')
