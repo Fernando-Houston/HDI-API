@@ -186,6 +186,45 @@ def create_app(config_name: str = "development") -> Flask:
             "message": "An internal server error occurred"
         }), 500
     
+    # Add welcome page
+    @app.route('/')
+    def welcome():
+        """Welcome page with API documentation"""
+        return jsonify({
+            "message": "Welcome to HDI (Houston Data Intelligence) API",
+            "version": "1.0",
+            "status": "operational",
+            "documentation": f"/docs" if settings.DEBUG else "Contact admin for API docs",
+            "health_check": "/health",
+            "endpoints": {
+                "property_search": {
+                    "method": "POST",
+                    "url": "/api/v1/properties/search",
+                    "description": "Search for property data by address",
+                    "example_body": {"address": "1234 Main St, Houston, TX"}
+                },
+                "market_trends": {
+                    "method": "GET", 
+                    "url": "/api/v1/market/trends?area=Houston",
+                    "description": "Get market trends for an area"
+                },
+                "batch_analysis": {
+                    "method": "POST",
+                    "url": "/api/v1/batch/analyze",
+                    "description": "Analyze multiple properties (up to 100)"
+                },
+                "property_by_account": {
+                    "method": "GET",
+                    "url": "/api/v1/properties/account/{account_number}",
+                    "description": "Get property by HCAD account number"
+                }
+            },
+            "example_usage": {
+                "curl": "curl -X POST https://hdi-api-production.up.railway.app/api/v1/properties/search -H 'Content-Type: application/json' -d '{\"address\": \"1234 Main St, Houston, TX\"}'",
+                "note": "Most endpoints require POST method with JSON body"
+            }
+        })
+    
     # Log app startup
     logger.info(
         "HDI Flask app created",
