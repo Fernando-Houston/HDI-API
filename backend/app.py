@@ -54,7 +54,8 @@ def create_app(config_name: str = "development") -> Flask:
     # Configure CORS with specific origins for your frontend
     CORS(app, 
          origins=[
-             "https://hdi-grid-ui.vercel.app",  # Your Vercel frontend
+             "https://hdi-grid-ui.vercel.app",  # Your grid UI frontend
+             "https://hdi-voice.vercel.app",    # Your voice AI frontend
              "http://localhost:5173",            # Vite development
              "http://localhost:3000",            # React development
              "http://localhost:4000",            # Alternative port
@@ -68,6 +69,17 @@ def create_app(config_name: str = "development") -> Flask:
     # Configure Response Compression (70% size reduction)
     Compress(app)
     app.config['COMPRESS_ALGORITHM'] = 'gzip'
+    
+    # Add response caching headers
+    @app.after_request
+    def add_cache_headers(response):
+        # Cache search results for 5 minutes
+        if request.path.startswith('/api/v1/properties/search'):
+            response.headers['Cache-Control'] = 'public, max-age=300'
+        # Cache location results for 10 minutes  
+        elif request.path.startswith('/api/v1/properties/location'):
+            response.headers['Cache-Control'] = 'public, max-age=600'
+        return response
     app.config['COMPRESS_LEVEL'] = 6
     app.config['COMPRESS_MIN_SIZE'] = 500
     
