@@ -454,6 +454,83 @@ class AllProperties(Resource):
             raise ValidationError(f"Database error: {str(e)}")
 
 
+@properties_ns.route('/voice-search')
+class VoicePropertySearch(Resource):
+    """Voice-optimized property search that handles natural speech patterns"""
+    
+    @properties_ns.doc("voice_search_properties")
+    @properties_ns.expect(properties_ns.model('VoiceSearch', {
+        'spoken_text': fields.String(required=True, description='Raw spoken text from voice input'),
+        'limit': fields.Integer(default=5, description='Max results')
+    }))
+    def post(self):
+        """Search properties from voice input with smart parsing"""
+        data = request.json
+        spoken_text = data.get('spoken_text', '').strip()
+        limit = data.get('limit', 5)
+        
+        if not spoken_text:
+            raise ValidationError("Spoken text is required")
+        
+        # Clean and parse voice input
+        # Handle common speech patterns: "nine twenty four zoe" → "924 ZOE"
+        cleaned_text = spoken_text.upper()
+        
+        # Convert spoken numbers to digits
+        number_words = {
+            'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3', 'FOUR': '4',
+            'FIVE': '5', 'SIX': '6', 'SEVEN': '7', 'EIGHT': '8', 'NINE': '9',
+            'TEN': '10', 'ELEVEN': '11', 'TWELVE': '12', 'THIRTEEN': '13',
+            'FOURTEEN': '14', 'FIFTEEN': '15', 'SIXTEEN': '16', 
+            'SEVENTEEN': '17', 'EIGHTEEN': '18', 'NINETEEN': '19',
+            'TWENTY': '20', 'THIRTY': '30', 'FORTY': '40', 'FIFTY': '50',
+            'SIXTY': '60', 'SEVENTY': '70', 'EIGHTY': '80', 'NINETY': '90',
+            'HUNDRED': '00', 'THOUSAND': '000'
+        }
+        
+        for word, digit in number_words.items():
+            cleaned_text = cleaned_text.replace(word, digit)
+        
+        # Remove common filler words
+        filler_words = ['PROPERTY', 'LOCATED', 'AT', 'IN', 'HOUSTON', 'TEXAS', 'TX', 'THE']
+        words = cleaned_text.split()
+        filtered_words = [w for w in words if w not in filler_words]
+        search_query = ' '.join(filtered_words)
+        
+        try:
+            # Use enhanced search
+            hcad_client = PostgresHCADClient()
+            properties = hcad_client.search_properties_by_address(search_query, limit=limit)
+            
+            # If no results, try individual components
+            if not properties and len(filtered_words) > 1:
+                # Try searching for just the street name
+                for word in filtered_words:
+                    if len(word) > 3 and not word.isdigit():
+                        properties = hcad_client.search_properties_by_address(word, limit=limit)
+                        if properties:
+                            break
+            
+            return {
+                "success": True,
+                "spoken_text": spoken_text,
+                "parsed_query": search_query,
+                "count": len(properties),
+                "properties": properties,
+                "search_hints": {
+                    "try_saying": [
+                        "924 Zoe Street",
+                        "Properties on Main Street",
+                        "1234 Westheimer Road"
+                    ] if not properties else []
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Voice search error: {str(e)}")
+            raise ValidationError(f"Search error: {str(e)}")
+
+
 @properties_ns.route('/ask')
 class PropertyAIChat(Resource):
     """Natural language property questions via Perplexity"""

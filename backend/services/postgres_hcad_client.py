@@ -739,6 +739,20 @@ class PostgresHCADClient:
                     """, (query, limit))
                     exact_matches = cur.fetchall()
                     
+                    # Stage 1b: Try with common suffixes if no exact match
+                    if not exact_matches and not any(suffix in query for suffix in ['ST', 'AVE', 'BLVD', 'DR', 'RD', 'LN', 'CT', 'WAY']):
+                        common_suffixes = ['ST', 'AVE', 'BLVD', 'DR', 'RD', 'LN', 'CT', 'WAY', 'PKWY', 'CIR']
+                        for suffix in common_suffixes:
+                            cur.execute("""
+                                SELECT * FROM properties 
+                                WHERE property_address = %s
+                                LIMIT %s
+                            """, (f"{query} {suffix}", limit))
+                            suffix_matches = cur.fetchall()
+                            if suffix_matches:
+                                exact_matches = suffix_matches
+                                break
+                    
                     if exact_matches:
                         results.extend([self._format_property_for_frontend(dict(row)) for row in exact_matches])
                     
