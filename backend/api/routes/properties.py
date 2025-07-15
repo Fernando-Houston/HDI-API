@@ -34,6 +34,17 @@ property_response_model = properties_ns.model("PropertyResponse", {
     "timestamp": fields.String(description="Response timestamp")
 })
 
+voice_search_model = properties_ns.model('VoiceSearch', {
+    'spoken_text': fields.String(required=True, description='Raw spoken text from voice input'),
+    'limit': fields.Integer(default=5, description='Max results')
+})
+
+ai_question_model = properties_ns.model('AIQuestion', {
+    'question': fields.String(required=True, description='Natural language question'),
+    'context': fields.Raw(description='Optional context (property data, previous answers)'),
+    'search_web': fields.Boolean(default=True, description='Allow web search for current info')
+})
+
 @properties_ns.route("/search")
 class PropertySearch(Resource):
     """Enhanced property search endpoint that returns arrays"""
@@ -459,10 +470,7 @@ class VoicePropertySearch(Resource):
     """Voice-optimized property search that handles natural speech patterns"""
     
     @properties_ns.doc("voice_search_properties")
-    @properties_ns.expect(properties_ns.model('VoiceSearch', {
-        'spoken_text': fields.String(required=True, description='Raw spoken text from voice input'),
-        'limit': fields.Integer(default=5, description='Max results')
-    }))
+    @properties_ns.expect(voice_search_model)
     def post(self):
         """Search properties from voice input with smart parsing"""
         data = request.json
