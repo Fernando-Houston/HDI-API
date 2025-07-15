@@ -454,6 +454,79 @@ class AllProperties(Resource):
             raise ValidationError(f"Database error: {str(e)}")
 
 
+@properties_ns.route('/ask')
+class PropertyAIChat(Resource):
+    """Natural language property questions via Perplexity"""
+    
+    @properties_ns.doc("ask_property_ai")
+    @properties_ns.expect(properties_ns.model('AIQuestion', {
+        'question': fields.String(required=True, description='Natural language question'),
+        'context': fields.Raw(description='Optional context (property data, previous answers)'),
+        'search_web': fields.Boolean(default=True, description='Allow web search for current info')
+    }))
+    def post(self):
+        """Ask any question about properties or real estate using AI"""
+        data = request.json
+        question = data.get('question')
+        context = data.get('context', {})
+        search_web = data.get('search_web', True)
+        
+        if not question:
+            raise ValidationError("Question is required")
+        
+        try:
+            perplexity = PerplexityClient()
+            
+            # Build enhanced prompt with context
+            prompt = f"""
+            User Question: {question}
+            
+            Context: You are Houston Voice AI with access to Harris County property data.
+            """
+            
+            # Add property context if provided
+            if context.get('property_address'):
+                prompt += f"\nCurrent Property: {context['property_address']}"
+                if context.get('property_data'):
+                    prompt += f"\nProperty Details: Market Value: ${context['property_data'].get('marketValue', 0):,}"
+                    prompt += f", Size: {context['property_data'].get('squareFeet', 0):,} sqft"
+                    prompt += f", Year Built: {context['property_data'].get('yearBuilt', 'Unknown')}"
+            
+            # Add conversation history if provided
+            if context.get('conversation_history'):
+                prompt += f"\n\nPrevious conversation:\n{context['conversation_history']}"
+            
+            prompt += f"""
+            
+            Please provide a helpful, conversational response about Houston real estate.
+            {'' if search_web else 'Use only the provided context, do not search the web.'}
+            Include specific data and cite sources when available.
+            """
+            
+            # Query Perplexity
+            response = perplexity.query(prompt, temperature=0.7)
+            
+            if response.get('success'):
+                return {
+                    "success": True,
+                    "question": question,
+                    "answer": response.get('data', ''),
+                    "metadata": response.get('metadata', {}),
+                    "context_used": bool(context),
+                    "web_search_enabled": search_web
+                }
+            else:
+                raise ValidationError("Failed to get AI response")
+                
+        except Exception as e:
+            logger.error(f"AI chat error: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Unable to process your question at this time"
+            }
+
+
 @properties_ns.route('/<string:account_number>/similar')
 class SimilarProperties(Resource):
     """Find similar properties to a given property"""
