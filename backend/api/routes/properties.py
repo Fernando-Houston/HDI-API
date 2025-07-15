@@ -604,6 +604,51 @@ class PropertyAIChat(Resource):
             }
 
 
+@properties_ns.route('/voice-format/<string:account_number>')
+class VoiceFormattedProperty(Resource):
+    """Get property data formatted for voice reading"""
+    
+    @properties_ns.doc("get_voice_formatted_property")
+    def get(self, account_number):
+        """Returns property data optimized for text-to-speech"""
+        hcad_client = PostgresHCADClient()
+        property_data = hcad_client.search_by_account(account_number)
+        
+        if not property_data:
+            return {
+                "success": False,
+                "voice_text": "I couldn't find a property with that account number."
+            }
+        
+        # Format for natural speech
+        value = property_data.get('market_value', 0)
+        value_text = f"${value:,.0f}".replace(",", " ")  # "450 000 dollars"
+        
+        sqft = property_data.get('building_sqft', 0)
+        year = property_data.get('year_built', 'unknown')
+        
+        voice_response = f"""
+        I found the property at {property_data.get('property_address', 'unknown address')}.
+        It's owned by {property_data.get('owner_name', 'unknown owner')}.
+        The market value is {value_text}.
+        {f'This {property_data.get("property_type", "property")} was built in {year}.' if year != 'unknown' else ''}
+        {f'It has {sqft:,.0f} square feet.' if sqft > 0 else ''}
+        {f'The property is in {property_data.get("city", "Houston")}.' if property_data.get('city') else ''}
+        """
+        
+        return {
+            "success": True,
+            "account_number": account_number,
+            "address": property_data.get('property_address'),
+            "voice_text": ' '.join(voice_response.split()),  # Clean whitespace
+            "voice_summary": {
+                "short": f"Property at {property_data.get('property_address')} valued at {value_text}",
+                "long": voice_response
+            },
+            "raw_data": property_data
+        }
+
+
 @properties_ns.route('/<string:account_number>/similar')
 class SimilarProperties(Resource):
     """Find similar properties to a given property"""
