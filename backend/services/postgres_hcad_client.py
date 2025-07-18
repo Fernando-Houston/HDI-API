@@ -23,10 +23,10 @@ class PostgresHCADClient:
     """PostgreSQL-based HCAD client - replaces all web scraping"""
 
     def __init__(self):
-        # Use environment variable or direct connection string
+        # Use Google Cloud SQL database
         self.db_url = os.getenv('DATABASE_URL',
-            "postgresql://postgres:JtJbPAybwWfYvRCgIlKWakPutHuggUoN@caboose.proxy.rlwy.net:21434/railway")
-        logger.info("PostgreSQL HCAD Client initialized")
+            "postgresql://postgres:JN%23Fly%2F%7B%3B%3Ep.bXVL@34.135.126.23:5432/hcad")
+        logger.info("PostgreSQL HCAD Client initialized with Google Cloud SQL")
 
     @cached_property(ttl_seconds=3600)  # Cache for 1 hour
     def get_property_data(self, address: str) -> Optional[Dict]:

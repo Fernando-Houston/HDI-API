@@ -28,7 +28,7 @@ class DatabasePool:
         if not hasattr(self, '_initialized'):
             self._initialized = True
             self.db_url = os.getenv('DATABASE_URL',
-                "postgresql://postgres:JtJbPAybwWfYvRCgIlKWakPutHuggUoN@caboose.proxy.rlwy.net:21434/railway")
+                "postgresql://postgres:JN%23Fly%2F%7B%3B%3Ep.bXVL@34.135.126.23:5432/hcad")
             
             # Create connection pool
             try:
