@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import Optional
 import structlog
 import threading
+import urllib.parse
 
 logger = structlog.get_logger(__name__)
 
@@ -27,8 +28,16 @@ class DatabasePool:
     def __init__(self):
         if not hasattr(self, '_initialized'):
             self._initialized = True
-            self.db_url = os.getenv('DATABASE_URL',
-                "postgresql://postgres:JN%23Fly%2F%7B%3B%3Ep.bXVL@34.135.126.23:5432/hcad")
+            # Use Google Cloud SQL database with proper URL encoding
+            db_url = os.getenv('DATABASE_URL')
+            
+            if db_url:
+                # If DATABASE_URL is provided, use it directly
+                self.db_url = db_url
+            else:
+                # Build URL with proper encoding
+                password = urllib.parse.quote("JN#Fly/{;>p.bXVL")
+                self.db_url = f"postgresql://postgres:{password}@34.135.126.23:5432/hcad"
             
             # Create connection pool
             try:
